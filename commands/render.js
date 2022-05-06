@@ -1,7 +1,7 @@
 /**
  * Render
  * Render a recording file as an animated gif image
- * 
+ *
  * @author Mohammad Fares <faressoft.com@gmail.com>
  */
 
@@ -23,7 +23,7 @@ function getProgressBar(operation, framesCount) {
 
 /**
  * Write the recording data into render/data.json
- * 
+ *
  * @param  {Object}  recordingFile
  * @return {Promise}
  */
@@ -39,9 +39,9 @@ function writeRecordingData(recordingFile) {
       }
 
       resolve();
-      
+
     });
-    
+
   });
 
 }
@@ -71,16 +71,16 @@ function loadPNG(path) {
         resolve(data);
 
       });
-      
+
     });
-    
+
   });
 
 }
 
 /**
  * Get the dimensions of the first rendered frame
- * 
+ *
  * @return {Promise}
  */
 function getFrameDimensions() {
@@ -95,14 +95,14 @@ function getFrameDimensions() {
       width: png.width,
       height: png.height
     });
-  
+
   });
 
 }
 
 /**
  * Render the frames into PNG images
- * 
+ *
  * @param  {Array}   records [{delay, content}, ...]
  * @param  {Object}  options {step}
  * @return {Promise}
@@ -114,18 +114,20 @@ function renderFrames(records, options) {
     // The number of frames
     var framesCount = records.length;
 
+    // Track execution time
+    var start = Date.now();
+
     // Create a progress bar
     var progressBar = getProgressBar('Rendering', Math.ceil(framesCount / options.step));
 
     // Execute the rendering process
     var render = di.spawn(di.electron, [di.path.join(ROOT_PATH, 'render/index.js'), options.step], {detached: false});
+    render.stdout.on('data', onData);
+    render.stderr.on('data', onError);
+    render.on('close', onClose);
 
-    render.stderr.on('data', function(error) {
-      render.kill();
-      reject(new Error(error));
-    });
-
-    render.stdout.on('data', function(data) {
+    // Track progress of rendering through stdout
+    function onData(data) {
 
       // Is not a recordIndex (to skip Electron's logs or new lines)
       if (di.is.not.number(parseInt(data.toString()))) {
@@ -133,13 +135,34 @@ function renderFrames(records, options) {
       }
 
       progressBar.tick();
+    }
 
-      // Rendering is completed
-      if (progressBar.complete) {
+    // Track rendering errors observed on stderr
+    function onError(error) {
+
+      // If error is Buffer, print it, otherwise reject
+      if (!!error && error instanceof Buffer) {
+        console.log(di.chalk.yellow(`[render] ${error.toString('utf8').trim()}`));
+      } else {
+        render.kill();
+        reject(new Error("Unknown error [" + typeof error + "]: " + error));
+      }
+    }
+
+    // React when rendering process finishes
+    function onClose(code) {
+      if (code !== 0) {
+        reject(new Error("Rendering exited with code " + code));
+      } else {
+        if (progressBar.complete) {
+          console.log(di.chalk.green('[render] Process successfully completed in ' + (Date.now() - start) + 'ms.'));
+        } else {
+          console.log(di.chalk.yellow('[render] Process completion unverified'));
+        }
+
         resolve();
       }
-
-    });
+    };
 
   });
 
@@ -147,7 +170,7 @@ function renderFrames(records, options) {
 
 /**
  * Merge the rendered frames into an animated GIF image
- * 
+ *
  * @param  {Array}   records         [{delay, content}, ...]
  * @param  {Object}  options         {quality, repeat, step, outputFile}
  * @param  {Object}  frameDimensions {width, height}
@@ -159,6 +182,9 @@ function mergeFrames(records, options, frameDimensions) {
 
     // The number of frames
     var framesCount = records.length;
+
+    // Track execution time
+    var start = Date.now();
 
     // Used for the step option
     var stepsCounter = 0;
@@ -215,7 +241,7 @@ function mergeFrames(records, options, frameDimensions) {
       }).catch(function(error) {
 
         callback(error);
-        
+
       });
 
     }, function(error) {
@@ -226,6 +252,9 @@ function mergeFrames(records, options, frameDimensions) {
 
       // Write the footer
       gif.finish();
+
+      // Finish
+      console.log(di.chalk.green('[merge] Process successfully completed in ' + (Date.now() - start) + 'ms.'));
       resolve();
 
     });
@@ -236,8 +265,8 @@ function mergeFrames(records, options, frameDimensions) {
 }
 
 /**
- * Delete the temporary rendered PNG images 
- * 
+ * Delete the temporary rendered PNG images
+ *
  * @return {Promise}
  */
 function cleanup() {
@@ -245,7 +274,7 @@ function cleanup() {
   return new Promise(function(resolve, reject) {
 
     di.fs.emptyDir(di.path.join(ROOT_PATH, 'render/frames'), function(error) {
-      
+
       if (error) {
         return reject(error);
       }
@@ -260,7 +289,7 @@ function cleanup() {
 
 /**
  * Executed after the command completes its task
- * 
+ *
  * @param {String} outputFile the path of the rendered image
  */
 function done(outputFile) {
@@ -274,7 +303,7 @@ function done(outputFile) {
 
 /**
  * The command's main function
- * 
+ *
  * @param {Object} argv
  */
 function command(argv) {
@@ -287,7 +316,7 @@ function command(argv) {
   var framesCount = records.length;
 
   // The path of the output file
-  var outputFile = di.utility.resolveFilePath('render' + (new Date()).getTime(), 'gif');
+  var outputFile = di.utility.resolveFilePath('render' + Date.now(), 'gif');
 
   // For adjusting (calculating) the frames delays
   var adjustFramesDelaysOptions = {
@@ -340,13 +369,13 @@ function command(argv) {
     // Merge the rendered frames into an animated GIF image
     di._.partial(mergeFrames, records, mergingOptions),
 
-    // Delete the temporary rendered PNG images 
+    // Delete the temporary rendered PNG images
     cleanup
 
   ]).then(function() {
 
     done(outputFile);
-    
+
   }).catch(di.errorHandler);
 
 }
@@ -375,7 +404,7 @@ module.exports.handler = command;
 
 /**
  * Builder
- * 
+ *
  * @param {Object} yargs
  */
 module.exports.builder = function(yargs) {
